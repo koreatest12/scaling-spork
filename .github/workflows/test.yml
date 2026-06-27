@@ -384,6 +384,57 @@ jobs:
           EOF
           echo "AppTest.java 생성 완료"
 
+      # ── 8-1. 컨테이너 파일 대량 생성 (Dockerfile / .dockerignore / docker-compose) ──
+      - name: Generate container files
+        run: |
+          # 멀티스테이지 Dockerfile: 빌드 스테이지(Maven) + 런타임 스테이지(JRE)
+          cat > Dockerfile << 'EOF'
+          # syntax=docker/dockerfile:1
+
+          # ===== 1단계: 빌드 =====
+          FROM maven:3.9-eclipse-temurin-21 AS build
+          WORKDIR /app
+          # 의존성 캐시 최적화: pom.xml 먼저 복사
+          COPY pom.xml .
+          RUN mvn -B -q dependency:go-offline
+          # 소스 복사 후 패키징
+          COPY src ./src
+          RUN mvn -B -q clean package -DskipTests
+
+          # ===== 2단계: 런타임 =====
+          FROM eclipse-temurin:21-jre AS runtime
+          WORKDIR /app
+          # 비루트 사용자로 실행 (보안)
+          RUN useradd -r -u 1001 appuser
+          COPY --from=build /app/target/scaling-spork.jar app.jar
+          USER appuser
+          # MCP 서버는 stdio 기반이므로 ENTRYPOINT로 직접 실행
+          ENTRYPOINT ["java", "-cp", "app.jar", "com.example.mcp.McpServer"]
+          EOF
+
+          cat > .dockerignore << 'EOF'
+          .git
+          .github
+          target
+          downloaded
+          *.md
+          EOF
+
+          cat > docker-compose.yml << 'EOF'
+          services:
+            mcp-server:
+              build:
+                context: .
+                dockerfile: Dockerfile
+              image: scaling-spork-mcp:latest
+              container_name: scaling-spork-mcp
+              # MCP는 stdio 통신이므로 표준입력 유지
+              stdin_open: true
+              tty: false
+              restart: "no"
+          EOF
+          echo "컨테이너 파일 생성 완료:" && ls -alF Dockerfile .dockerignore docker-compose.yml
+
       # ── 9. 생성된 전체 구조 확인 ──
       - name: Show generated project tree
         run: find . -path ./.git -prune -o -type f -print | sort
@@ -422,6 +473,29 @@ jobs:
           echo "----"
           echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
             | java -cp target/scaling-spork.jar com.example.mcp.McpServer
+
+      # ── 12-1. Docker 이미지 빌드 ──
+      - name: Build Docker image
+        run: |
+          docker build -t scaling-spork-mcp:${{ github.sha }} -t scaling-spork-mcp:latest .
+          docker images scaling-spork-mcp
+
+      # ── 12-2. 컨테이너 동작 검증 (MCP 요청을 stdin으로 주입) ──
+      - name: Verify container (MCP over stdio)
+        run: |
+          echo "===== initialize ====="
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            | docker run -i --rm scaling-spork-mcp:latest
+          echo "===== tools/call (echo) ====="
+          echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"message":"from container"}}}' \
+            | docker run -i --rm scaling-spork-mcp:latest
+
+      # ── 12-3. 컨테이너 이미지를 tar로 저장 (적재용) ──
+      - name: Export container image
+        run: |
+          mkdir -p image
+          docker save scaling-spork-mcp:latest -o image/scaling-spork-mcp.tar
+          ls -alh image
 
       # ── 13. 소스 파일 적재(업로드) ──
       - name: Upload source files
@@ -465,6 +539,29 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      # ── 16-1. 컨테이너 정의 파일 적재 ──
+      - name: Upload container files
+        id: upload_container_files
+        uses: actions/upload-artifact@v6
+        with:
+          name: container-files
+          path: |
+            Dockerfile
+            .dockerignore
+            docker-compose.yml
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── 16-2. 컨테이너 이미지(tar) 적재 ──
+      - name: Upload container image
+        id: upload_container_image
+        uses: actions/upload-artifact@v6
+        with:
+          name: container-image
+          path: image/scaling-spork-mcp.tar
+          if-no-files-found: error
+          retention-days: 30
+
       # ── 17. 공식 다운로드 주소를 실행 요약에 링크로 출력 ──
       - name: Publish download links
         run: |
@@ -477,6 +574,8 @@ jobs:
             echo "| 리소스 파일 | [resource-files](${{ steps.upload_resource.outputs.artifact-url }}) |"
             echo "| 빌드 산출물(JAR) | [build-output](${{ steps.upload_build.outputs.artifact-url }}) |"
             echo "| 전체 프로젝트 | [full-project](${{ steps.upload_project.outputs.artifact-url }}) |"
+            echo "| 컨테이너 파일 | [container-files](${{ steps.upload_container_files.outputs.artifact-url }}) |"
+            echo "| 컨테이너 이미지 | [container-image](${{ steps.upload_container_image.outputs.artifact-url }}) |"
             echo ""
             echo "> 링크는 GitHub 로그인 사용자만 열 수 있고, 보관 기간(30일) 동안 유효합니다."
           } >> "$GITHUB_STEP_SUMMARY"
