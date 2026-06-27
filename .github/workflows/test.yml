@@ -18,85 +18,419 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # ── 1. 체크아웃 (최신 v6) ──
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # cache 옵션 제거 — 빌드 파일이 없어서 캐시 키 생성 불가
+      # ── 2. JDK 설정 (최신 setup-java v5, Java 21 LTS, 캐시는 pom.xml 생성 후 따로 켬) ──
       - name: Set up JDK
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Generate source files
+      # ── 3. Maven 프로젝트 디렉토리 구조 대량 생성 ──
+      - name: Create Maven directory layout
         run: |
-          mkdir -p build/src
-          cat > build/src/App.java << 'EOF'
+          mkdir -p src/main/java/com/example
+          mkdir -p src/main/java/com/example/mcp
+          mkdir -p src/main/java/com/example/mcp/tools
+          mkdir -p src/main/resources
+          mkdir -p src/test/java/com/example
+          echo "생성된 디렉토리 구조:"
+          find src -type d | sort
+
+      # ── 4. pom.xml (Maven 빌드 파일) 생성 ──
+      - name: Generate pom.xml
+        run: |
+          cat > pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+
+            <groupId>com.example</groupId>
+            <artifactId>scaling-spork</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+
+            <properties>
+              <maven.compiler.release>21</maven.compiler.release>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              <jackson.version>2.17.1</jackson.version>
+              <junit.version>5.10.2</junit.version>
+            </properties>
+
+            <dependencies>
+              <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+              </dependency>
+              <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${junit.version}</version>
+                <scope>test</scope>
+              </dependency>
+            </dependencies>
+
+            <build>
+              <finalName>scaling-spork</finalName>
+              <plugins>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-compiler-plugin</artifactId>
+                  <version>3.13.0</version>
+                </plugin>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-surefire-plugin</artifactId>
+                  <version>3.2.5</version>
+                </plugin>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-shade-plugin</artifactId>
+                  <version>3.5.3</version>
+                  <executions>
+                    <execution>
+                      <phase>package</phase>
+                      <goals><goal>shade</goal></goals>
+                      <configuration>
+                        <transformers>
+                          <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                            <mainClass>com.example.App</mainClass>
+                          </transformer>
+                        </transformers>
+                      </configuration>
+                    </execution>
+                  </executions>
+                </plugin>
+              </plugins>
+            </build>
+          </project>
+          EOF
+          echo "pom.xml 생성 완료" && head -n 12 pom.xml
+
+      # ── 5. 자바 소스 파일 대량 생성 (App / Util) ──
+      - name: Generate application sources
+        run: |
+          cat > src/main/java/com/example/App.java << 'EOF'
+          package com.example;
+
           public class App {
               public static void main(String[] args) {
-                  System.out.println("Hello from CI build #" + System.getenv("BUILD_NO"));
+                  String buildNo = System.getenv().getOrDefault("BUILD_NO", "local");
+                  System.out.println("Hello from CI build #" + buildNo);
+                  System.out.println("Now: " + Util.now());
               }
           }
           EOF
-          cat > build/src/Util.java << 'EOF'
-          public class Util {
-              public static String now() { return java.time.LocalDateTime.now().toString(); }
+
+          cat > src/main/java/com/example/Util.java << 'EOF'
+          package com.example;
+
+          import java.time.LocalDateTime;
+
+          public final class Util {
+              private Util() {}
+              public static String now() {
+                  return LocalDateTime.now().toString();
+              }
           }
           EOF
-          echo "생성된 소스 파일:" && ls -alF build/src
-        env:
-          BUILD_NO: ${{ github.run_number }}
+          echo "App.java, Util.java 생성 완료"
 
+      # ── 6. MCP 서버 코드 대량 생성 (서버 본체 + 툴 인터페이스 + 툴 2종) ──
+      - name: Generate MCP server sources
+        run: |
+          cat > src/main/java/com/example/mcp/tools/Tool.java << 'EOF'
+          package com.example.mcp.tools;
+
+          import com.fasterxml.jackson.databind.JsonNode;
+
+          public interface Tool {
+              String name();
+              String description();
+              String call(JsonNode arguments);
+          }
+          EOF
+
+          cat > src/main/java/com/example/mcp/tools/EchoTool.java << 'EOF'
+          package com.example.mcp.tools;
+
+          import com.fasterxml.jackson.databind.JsonNode;
+
+          public class EchoTool implements Tool {
+              @Override public String name() { return "echo"; }
+              @Override public String description() { return "Echoes back the provided message."; }
+              @Override public String call(JsonNode arguments) {
+                  return "Echo: " + arguments.path("message").asText("");
+              }
+          }
+          EOF
+
+          cat > src/main/java/com/example/mcp/tools/TimeTool.java << 'EOF'
+          package com.example.mcp.tools;
+
+          import com.fasterxml.jackson.databind.JsonNode;
+          import java.time.LocalDateTime;
+
+          public class TimeTool implements Tool {
+              @Override public String name() { return "time"; }
+              @Override public String description() { return "Returns the current server time."; }
+              @Override public String call(JsonNode arguments) {
+                  return "Current time: " + LocalDateTime.now();
+              }
+          }
+          EOF
+
+          cat > src/main/java/com/example/mcp/McpServer.java << 'EOF'
+          package com.example.mcp;
+
+          import com.example.mcp.tools.EchoTool;
+          import com.example.mcp.tools.TimeTool;
+          import com.example.mcp.tools.Tool;
+          import com.fasterxml.jackson.databind.JsonNode;
+          import com.fasterxml.jackson.databind.ObjectMapper;
+          import com.fasterxml.jackson.databind.node.ArrayNode;
+          import com.fasterxml.jackson.databind.node.ObjectNode;
+
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.io.PrintStream;
+          import java.nio.charset.StandardCharsets;
+          import java.util.LinkedHashMap;
+          import java.util.Map;
+
+          /**
+           * 최소 구현 MCP(Model Context Protocol) 서버.
+           * JSON-RPC 2.0을 stdin/stdout으로 처리하며 initialize / tools/list / tools/call 지원.
+           */
+          public class McpServer {
+              private static final ObjectMapper M = new ObjectMapper();
+              private static final String PROTOCOL_VERSION = "2024-11-05";
+
+              private final Map<String, Tool> tools = new LinkedHashMap<>();
+
+              public McpServer() {
+                  register(new EchoTool());
+                  register(new TimeTool());
+              }
+
+              private void register(Tool t) { tools.put(t.name(), t); }
+
+              public void run() throws Exception {
+                  BufferedReader in = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+                  PrintStream out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
+                  String line;
+                  while ((line = in.readLine()) != null) {
+                      if (line.isBlank()) continue;
+                      JsonNode req = M.readTree(line);
+                      ObjectNode resp = handle(req);
+                      if (resp != null) out.println(M.writeValueAsString(resp));
+                  }
+              }
+
+              private ObjectNode handle(JsonNode req) {
+                  String method = req.path("method").asText();
+                  JsonNode id = req.get("id");
+                  return switch (method) {
+                      case "initialize" -> initialize(id);
+                      case "tools/list" -> toolsList(id);
+                      case "tools/call" -> toolsCall(id, req.path("params"));
+                      default -> error(id, -32601, "Method not found: " + method);
+                  };
+              }
+
+              private ObjectNode base(JsonNode id) {
+                  ObjectNode n = M.createObjectNode();
+                  n.put("jsonrpc", "2.0");
+                  if (id != null) n.set("id", id); else n.putNull("id");
+                  return n;
+              }
+
+              private ObjectNode initialize(JsonNode id) {
+                  ObjectNode resp = base(id);
+                  ObjectNode result = resp.putObject("result");
+                  result.put("protocolVersion", PROTOCOL_VERSION);
+                  result.putObject("capabilities").putObject("tools");
+                  ObjectNode info = result.putObject("serverInfo");
+                  info.put("name", "scaling-spork-mcp");
+                  info.put("version", "1.0.0");
+                  return resp;
+              }
+
+              private ObjectNode toolsList(JsonNode id) {
+                  ObjectNode resp = base(id);
+                  ObjectNode result = resp.putObject("result");
+                  ArrayNode arr = result.putArray("tools");
+                  for (Tool t : tools.values()) {
+                      ObjectNode tn = arr.addObject();
+                      tn.put("name", t.name());
+                      tn.put("description", t.description());
+                      ObjectNode schema = tn.putObject("inputSchema");
+                      schema.put("type", "object");
+                      schema.putObject("properties");
+                  }
+                  return resp;
+              }
+
+              private ObjectNode toolsCall(JsonNode id, JsonNode params) {
+                  String name = params.path("name").asText();
+                  Tool tool = tools.get(name);
+                  if (tool == null) return error(id, -32602, "Unknown tool: " + name);
+                  String text = tool.call(params.path("arguments"));
+                  ObjectNode resp = base(id);
+                  ObjectNode result = resp.putObject("result");
+                  ObjectNode item = result.putArray("content").addObject();
+                  item.put("type", "text");
+                  item.put("text", text);
+                  return resp;
+              }
+
+              private ObjectNode error(JsonNode id, int code, String message) {
+                  ObjectNode resp = base(id);
+                  ObjectNode err = resp.putObject("error");
+                  err.put("code", code);
+                  err.put("message", message);
+                  return resp;
+              }
+
+              public static void main(String[] args) throws Exception {
+                  new McpServer().run();
+              }
+          }
+          EOF
+          echo "MCP 서버 소스 4개 생성 완료"
+
+      # ── 7. 리소스 파일 대량 생성 ──
       - name: Generate resource files
         run: |
-          mkdir -p build/resources
-          cat > build/resources/application.properties << 'EOF'
+          cat > src/main/resources/application.properties << 'EOF'
           app.name=scaling-spork
           app.version=1.0.0
           build.number=${{ github.run_number }}
           build.commit=${{ github.sha }}
           EOF
-          cat > build/resources/config.yml << 'EOF'
+
+          cat > src/main/resources/config.yml << 'EOF'
           server:
             port: 8080
           logging:
             level: INFO
           EOF
-          echo "생성된 리소스 파일:" && ls -alF build/resources
 
-      - name: Compile generated sources
+          cat > src/main/resources/mcp-manifest.json << 'EOF'
+          {
+            "name": "scaling-spork-mcp",
+            "version": "1.0.0",
+            "protocolVersion": "2024-11-05",
+            "transport": "stdio",
+            "tools": [
+              { "name": "echo", "description": "Echoes back the provided message." },
+              { "name": "time", "description": "Returns the current server time." }
+            ]
+          }
+          EOF
+
+          cat > src/main/resources/banner.txt << 'EOF'
+            ____            _ _                 ____                  _
+           / ___|  ___ __ _| (_)_ __   __ _    / ___| _ __   ___  _ __| | __
+           \___ \ / __/ _` | | | '_ \ / _` |   \___ \| '_ \ / _ \| '__| |/ /
+            ___) | (_| (_| | | | | | | (_| |    ___) | |_) | (_) | |  |   <
+           |____/ \___\__,_|_|_|_| |_|\__, |   |____/| .__/ \___/|_|  |_|\_\
+                                      |___/          |_|
+          EOF
+          echo "리소스 4종 생성 완료" && ls -alF src/main/resources
+
+      # ── 8. 테스트 코드 생성 ──
+      - name: Generate test sources
         run: |
-          mkdir -p build/classes
-          javac -d build/classes build/src/*.java
-          echo "컴파일 결과:" && ls -alF build/classes
+          cat > src/test/java/com/example/AppTest.java << 'EOF'
+          package com.example;
 
+          import org.junit.jupiter.api.Test;
+          import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+          class AppTest {
+              @Test
+              void utilNowNotNull() {
+                  assertNotNull(Util.now());
+              }
+          }
+          EOF
+          echo "AppTest.java 생성 완료"
+
+      # ── 9. 생성된 전체 구조 확인 ──
+      - name: Show generated project tree
+        run: find . -path ./.git -prune -o -type f -print | sort
+
+      # ── 10. Maven 빌드 (컴파일 + 테스트 + 패키징) ──
+      - name: Build with Maven
+        run: mvn -B clean package --file pom.xml
+        env:
+          BUILD_NO: ${{ github.run_number }}
+
+      # ── 11. JAR 스모크 테스트 (App 실행) ──
+      - name: Smoke test (run jar)
+        run: java -jar target/scaling-spork.jar
+        env:
+          BUILD_NO: ${{ github.run_number }}
+
+      # ── 12. MCP 서버 동작 검증 (initialize 요청을 stdin으로 주입) ──
+      - name: Verify MCP server
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            | java -cp target/scaling-spork.jar com.example.mcp.McpServer
+          echo "----"
+          echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | java -cp target/scaling-spork.jar com.example.mcp.McpServer
+
+      # ── 13. 소스 파일 적재(업로드) ──
       - name: Upload source files
         id: upload_source
         uses: actions/upload-artifact@v6
         with:
           name: source-files
-          path: build/src/**
+          path: src/main/java/**
           if-no-files-found: error
           retention-days: 30
 
+      # ── 14. 리소스 파일 적재 ──
       - name: Upload resource files
         id: upload_resource
         uses: actions/upload-artifact@v6
         with:
           name: resource-files
-          path: build/resources/**
+          path: src/main/resources/**
           if-no-files-found: error
           retention-days: 30
 
+      # ── 15. 빌드 산출물(JAR) 적재 ──
       - name: Upload build output
         id: upload_build
         uses: actions/upload-artifact@v6
         with:
           name: build-output
-          path: build/classes/**
+          path: target/*.jar
           if-no-files-found: error
           retention-days: 30
 
+      # ── 16. 프로젝트 전체 적재 (pom.xml + src 트리) ──
+      - name: Upload full project
+        id: upload_project
+        uses: actions/upload-artifact@v6
+        with:
+          name: full-project
+          path: |
+            pom.xml
+            src/**
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── 17. 공식 다운로드 주소를 실행 요약에 링크로 출력 ──
       - name: Publish download links
         run: |
           {
@@ -106,11 +440,13 @@ jobs:
             echo "|----------|----------------|"
             echo "| 소스 파일 | [source-files](${{ steps.upload_source.outputs.artifact-url }}) |"
             echo "| 리소스 파일 | [resource-files](${{ steps.upload_resource.outputs.artifact-url }}) |"
-            echo "| 빌드 산출물 | [build-output](${{ steps.upload_build.outputs.artifact-url }}) |"
+            echo "| 빌드 산출물(JAR) | [build-output](${{ steps.upload_build.outputs.artifact-url }}) |"
+            echo "| 전체 프로젝트 | [full-project](${{ steps.upload_project.outputs.artifact-url }}) |"
             echo ""
             echo "> 링크는 GitHub 로그인 사용자만 열 수 있고, 보관 기간(30일) 동안 유효합니다."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── 18. (검증) 올린 아티팩트 되받기 (최신 download v7) ──
       - name: Download artifacts back (verify)
         uses: actions/download-artifact@v7
         with:
