@@ -18,19 +18,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # ── 1. 체크아웃 (최신 v6) ──
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # ── 2. JDK 설정 (최신 setup-java v5, Java 21 LTS) ──
+      # cache 옵션 제거 — 빌드 파일이 없어서 캐시 키 생성 불가
       - name: Set up JDK
         uses: actions/setup-java@v5
         with:
-          distribution: 'temurin'   # Eclipse Temurin (권장)
-          java-version: '21'        # 최신 LTS. 최신 기능 원하면 '25'
-          cache: 'gradle'           # 'maven' 사용 시 변경
+          distribution: 'temurin'
+          java-version: '21'
 
-      # ── 3. 소스 파일 생성 ──
       - name: Generate source files
         run: |
           mkdir -p build/src
@@ -50,7 +47,6 @@ jobs:
         env:
           BUILD_NO: ${{ github.run_number }}
 
-      # ── 4. 리소스 파일 생성 ──
       - name: Generate resource files
         run: |
           mkdir -p build/resources
@@ -68,14 +64,12 @@ jobs:
           EOF
           echo "생성된 리소스 파일:" && ls -alF build/resources
 
-      # ── 5. 컴파일 (생성된 소스 검증) ──
       - name: Compile generated sources
         run: |
           mkdir -p build/classes
           javac -d build/classes build/src/*.java
           echo "컴파일 결과:" && ls -alF build/classes
 
-      # ── 6. 소스 파일 업로드 (최신 v6) ──
       - name: Upload source files
         id: upload_source
         uses: actions/upload-artifact@v6
@@ -85,7 +79,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ── 7. 리소스 파일 업로드 ──
       - name: Upload resource files
         id: upload_resource
         uses: actions/upload-artifact@v6
@@ -95,7 +88,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ── 8. 빌드 산출물(클래스) 업로드 ──
       - name: Upload build output
         id: upload_build
         uses: actions/upload-artifact@v6
@@ -105,7 +97,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # ── 9. 공식 다운로드 주소를 실행 요약에 링크로 출력 ──
       - name: Publish download links
         run: |
           {
@@ -120,7 +111,6 @@ jobs:
             echo "> 링크는 GitHub 로그인 사용자만 열 수 있고, 보관 기간(30일) 동안 유효합니다."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ── 10. (검증) 올린 아티팩트 되받기 (최신 download v7) ──
       - name: Download artifacts back (verify)
         uses: actions/download-artifact@v7
         with:
