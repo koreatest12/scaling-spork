@@ -21,53 +21,82 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # 1) 실제 저장소 구조 확인 (디버그)
-      - name: List repository files
+      # 1) 소스 파일 생성
+      - name: Generate source files
         run: |
-          echo "===== 작업 디렉토리: $(pwd) ====="
-          ls -alF
-          echo "===== 전체 파일 트리 (.git 제외) ====="
-          find . -path ./.git -prune -o -print | sort
+          mkdir -p build/src
+          cat > build/src/App.java << 'EOF'
+          public class App {
+              public static void main(String[] args) {
+                  System.out.println("Hello from CI build!");
+              }
+          }
+          EOF
+          cat > build/src/Util.java << 'EOF'
+          public class Util {
+              public static String now() { return java.time.LocalDateTime.now().toString(); }
+          }
+          EOF
+          echo "생성된 소스 파일:"
+          ls -alF build/src
 
-      - name: Run a one-line script
-        run: echo Hello, world!
+      # 2) 리소스 파일 생성
+      - name: Generate resource files
+        run: |
+          mkdir -p build/resources
+          cat > build/resources/application.properties << 'EOF'
+          app.name=scaling-spork
+          app.version=1.0.0
+          build.number=${{ github.run_number }}
+          build.commit=${{ github.sha }}
+          EOF
+          cat > build/resources/config.yml << 'EOF'
+          server:
+            port: 8080
+          logging:
+            level: INFO
+          EOF
+          echo "생성된 리소스 파일:"
+          ls -alF build/resources
 
-      # 2) 소스 파일 업로드 — 위치 무관하게 확장자로 탐색
+      # 3) 소스 파일 업로드 (출력값으로 공식 URL 확보)
       - name: Upload source files
+        id: upload_source
         uses: actions/upload-artifact@v6
         with:
           name: source-files
-          path: |
-            **/*.java
-            **/*.py
-            **/*.js
-            **/*.ts
-            **/*.gradle
-            **/pom.xml
-          if-no-files-found: ignore   # 없어도 경고 없이 스킵
+          path: build/src/**
+          if-no-files-found: error
           retention-days: 30
 
-      # 3) 리소스 파일 업로드 — 위치 무관하게 확장자로 탐색
+      # 4) 리소스 파일 업로드
       - name: Upload resource files
+        id: upload_resource
         uses: actions/upload-artifact@v6
         with:
           name: resource-files
-          path: |
-            **/resources/**
-            **/*.properties
-            **/*.yml
-            **/*.yaml
-            **/*.json
-            **/*.xml
-          if-no-files-found: ignore
-          retention-days: 30
-
-      # 4) 위 패턴에 안 걸려도 전체 저장소를 통째로 업로드 (항상 성공)
-      - name: Upload full repository (fallback)
-        uses: actions/upload-artifact@v6
-        with:
-          name: full-repository
-          path: .
-          include-hidden-files: false   # .git 등 숨김 디렉토리 제외
+          path: build/resources/**
           if-no-files-found: error
           retention-days: 30
+
+      # 5) 공식 다운로드 주소를 실행 요약에 링크로 출력
+      - name: Publish download links
+        run: |
+          {
+            echo "## 📦 아티팩트 다운로드 (공식 주소)"
+            echo ""
+            echo "| 아티팩트 | 다운로드 링크 |"
+            echo "|----------|----------------|"
+            echo "| 소스 파일 | [source-files](${{ steps.upload_source.outputs.artifact-url }}) |"
+            echo "| 리소스 파일 | [resource-files](${{ steps.upload_resource.outputs.artifact-url }}) |"
+            echo ""
+            echo "> 링크는 GitHub에 로그인한 사용자만 열 수 있으며, 아티팩트 보관 기간(30일) 동안 유효합니다."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # 6) (검증용) 방금 올린 아티팩트를 다시 다운로드
+      - name: Download artifacts back (verify)
+        uses: actions/download-artifact@v7
+        with:
+          path: downloaded
+      - name: Show downloaded structure
+        run: ls -R downloaded
