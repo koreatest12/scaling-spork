@@ -7,12 +7,10 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
-# 동일 브랜치 중복 실행 자동 취소 (러너 비용 절약)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 최소 권한 원칙 (보안)
 permissions:
   contents: read
 
@@ -20,9 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # Node.js 24 지원 버전으로 업그레이드 (경고 해결의 핵심)
+      # 최신 버전(Node.js 24 기반)으로 업그레이드 — 경고 해결
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Run a one-line script
         run: echo Hello, world!
@@ -31,3 +29,28 @@ jobs:
         run: |
           echo Add other actions to build,
           echo test, and deploy your project.
+
+      # --- 소스 파일 다운로드(아티팩트) 기능 ---
+      - name: Upload source files
+        uses: actions/upload-artifact@v6
+        with:
+          name: source-files
+          path: |
+            src/**
+            *.gradle
+            pom.xml
+          if-no-files-found: warn      # 파일 없을 때 경고만 (error/ignore 선택 가능)
+          retention-days: 30           # 보관 기간(최대 90일)
+          compression-level: 6         # 0~9, 압축 거의 안 될 큰 파일은 0 권장
+
+      # --- 리소스 파일 다운로드(아티팩트) 기능 ---
+      - name: Upload resource files
+        uses: actions/upload-artifact@v6
+        with:
+          name: resource-files
+          path: |
+            src/main/resources/**
+            assets/**
+            config/**
+          if-no-files-found: warn
+          retention-days: 30
