@@ -98,11 +98,32 @@ jobs:
                       <phase>package</phase>
                       <goals><goal>shade</goal></goals>
                       <configuration>
+                        <createDependencyReducedPom>false</createDependencyReducedPom>
                         <transformers>
+                          <!-- 실행 진입점(Main-Class) 지정 -->
                           <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                             <mainClass>com.example.App</mainClass>
                           </transformer>
+                          <!-- LICENSE/NOTICE 등 메타 파일 병합 -->
+                          <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                          <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
+                          <!-- 서비스 디스크립터 병합(여러 SPI 대비) -->
+                          <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                         </transformers>
+                        <filters>
+                          <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                              <!-- 중복 module-info 및 서명/메타 충돌 파일 제외 -->
+                              <exclude>module-info.class</exclude>
+                              <exclude>META-INF/versions/*/module-info.class</exclude>
+                              <exclude>META-INF/*.SF</exclude>
+                              <exclude>META-INF/*.DSA</exclude>
+                              <exclude>META-INF/*.RSA</exclude>
+                              <exclude>META-INF/MANIFEST.MF</exclude>
+                            </excludes>
+                          </filter>
+                        </filters>
                       </configuration>
                     </execution>
                   </executions>
@@ -373,7 +394,21 @@ jobs:
         env:
           BUILD_NO: ${{ github.run_number }}
 
-      # ── 11. JAR 스모크 테스트 (App 실행) ──
+      # ── 11. shade 결과 검증 (module-info 제외 여부 확인) ──
+      - name: Inspect shaded jar
+        run: |
+          echo "===== JAR 내 module-info 잔존 여부 (없어야 정상) ====="
+          if unzip -l target/scaling-spork.jar | grep -i "module-info.class"; then
+            echo "WARNING: module-info.class 가 남아있습니다."
+          else
+            echo "OK: module-info.class 가 제거되었습니다."
+          fi
+          echo "===== META-INF 목록 ====="
+          unzip -l target/scaling-spork.jar | grep "META-INF/" || true
+          echo "===== Main-Class 매니페스트 확인 ====="
+          unzip -p target/scaling-spork.jar META-INF/MANIFEST.MF | grep -i "Main-Class" || true
+
+      # ── 12. JAR 스모크 테스트 (App 실행) ──
       - name: Smoke test (run jar)
         run: java -jar target/scaling-spork.jar
         env:
